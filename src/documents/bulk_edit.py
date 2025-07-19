@@ -653,7 +653,8 @@ def append(
 
     logger.info(f"Re-consuming target document {target_document_id} with appended pages.")
 
-    # Delete the target document and re-consume with new content
+    # Always replace the target document with the new appended version
+    # and optionally delete source documents
     if delete_originals and len(affected_docs) > 0:
         logger.info(
             "Queueing removal of source documents after appending to target document",
@@ -673,8 +674,8 @@ def append(
         )
         consume_and_delete_task.delay()
     else:
-        # Just re-consume the target document and optionally delete source documents
-        delete_target_task = chain(
+        # Just re-consume the target document without deleting source documents
+        consume_and_delete_target_task = chain(
             consume_file.s(
                 ConsumableDocument(
                     source=DocumentSource.ConsumeFolder,
@@ -684,10 +685,7 @@ def append(
             ),
             delete.si([target_doc.id]),
         )
-        delete_target_task.delay()
-        
-        if delete_originals and len(affected_docs) > 0:
-            delete.delay(affected_docs)
+        consume_and_delete_target_task.delay()
 
     return "OK"
 

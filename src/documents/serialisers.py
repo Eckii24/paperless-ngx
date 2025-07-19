@@ -1520,6 +1520,25 @@ class BulkEditSerializer(
         else:
             parameters["archive_fallback"] = False
 
+    def _validate_parameters_append(self, parameters):
+        if "target_document_id" not in parameters:
+            raise serializers.ValidationError("target_document_id not specified")
+        try:
+            parameters["target_document_id"] = int(parameters["target_document_id"])
+        except ValueError:
+            raise serializers.ValidationError("target_document_id must be an integer")
+        
+        if "delete_originals" in parameters:
+            if not isinstance(parameters["delete_originals"], bool):
+                raise serializers.ValidationError("delete_originals must be a boolean")
+        else:
+            parameters["delete_originals"] = False
+        if "archive_fallback" in parameters:
+            if not isinstance(parameters["archive_fallback"], bool):
+                raise serializers.ValidationError("archive_fallback must be a boolean")
+        else:
+            parameters["archive_fallback"] = False
+
     def validate(self, attrs):
         method = attrs["method"]
         parameters = attrs["parameters"]
@@ -1554,6 +1573,8 @@ class BulkEditSerializer(
             self._validate_parameters_delete_pages(parameters)
         elif method == bulk_edit.merge:
             self._validate_parameters_merge(parameters)
+        elif method == bulk_edit.append:
+            self._validate_parameters_append(parameters)
 
         return attrs
 

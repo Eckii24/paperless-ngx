@@ -36,6 +36,7 @@ import { StoragePathService } from 'src/app/services/rest/storage-path.service'
 import { TagService } from 'src/app/services/rest/tag.service'
 import { SettingsService } from 'src/app/services/settings.service'
 import { ToastService } from 'src/app/services/toast.service'
+import { AppendConfirmDialogComponent } from '../../common/confirm-dialog/append-confirm-dialog/append-confirm-dialog.component'
 import { MergeConfirmDialogComponent } from '../../common/confirm-dialog/merge-confirm-dialog/merge-confirm-dialog.component'
 import { RotateConfirmDialogComponent } from '../../common/confirm-dialog/rotate-confirm-dialog/rotate-confirm-dialog.component'
 import { CorrespondentEditDialogComponent } from '../../common/edit-dialog/correspondent-edit-dialog/correspondent-edit-dialog.component'
@@ -858,6 +859,36 @@ export class BulkEditorComponent
         this.executeBulkOperation(modal, 'merge', args, mergeDialog.documentIDs)
         this.toastService.showInfo(
           $localize`Merged document will be queued for consumption.`
+        )
+      })
+  }
+
+  appendSelected() {
+    let modal = this.modalService.open(AppendConfirmDialogComponent, {
+      backdrop: 'static',
+    })
+    const appendDialog = modal.componentInstance as AppendConfirmDialogComponent
+    appendDialog.title = $localize`Append confirm`
+    appendDialog.messageBold = $localize`This operation will append pages from ${this.list.selected.size - 1} documents to the selected target document.`
+    appendDialog.btnCaption = $localize`Proceed`
+    appendDialog.documentIDs = Array.from(this.list.selected)
+    appendDialog.confirmClicked
+      .pipe(takeUntil(this.unsubscribeNotifier))
+      .subscribe(() => {
+        const args = {}
+        if (appendDialog.targetDocumentID > -1) {
+          args['target_document_id'] = appendDialog.targetDocumentID
+        }
+        if (appendDialog.deleteOriginals) {
+          args['delete_originals'] = true
+        }
+        if (appendDialog.archiveFallback) {
+          args['archive_fallback'] = true
+        }
+        appendDialog.buttonsEnabled = false
+        this.executeBulkOperation(modal, 'append', args, appendDialog.documentIDs)
+        this.toastService.showInfo(
+          $localize`Target document will be queued for re-consumption with appended pages.`
         )
       })
   }

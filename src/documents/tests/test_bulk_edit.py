@@ -787,6 +787,120 @@ class TestPDFActions(DirectoriesMixin, TestCase):
 
         mock_consume_file.assert_not_called()
 
+    @mock.patch("documents.tasks.consume_file.s")
+    def test_append(self, mock_consume_file):
+        """
+        GIVEN:
+            - Existing documents
+        WHEN:
+            - Append action is called with target document and source documents
+        THEN:
+            - Consume file should be called for re-consuming the target document
+        """
+        target_doc_id = self.doc1.id
+        source_doc_ids = [self.doc2.id, self.doc3.id]
+        user = User.objects.create(username="test_user")
+
+        result = bulk_edit.append(
+            [target_doc_id] + source_doc_ids,
+            target_document_id=target_doc_id,
+            delete_originals=False,
+            user=user,
+        )
+
+        mock_consume_file.assert_called()
+        consume_file_args, _ = mock_consume_file.call_args
+        self.assertEqual(
+            Path(consume_file_args[0].original_file).name,
+            f"{target_doc_id}_appended.pdf",
+        )
+        self.assertEqual(consume_file_args[1].title, "A (appended)")
+        self.assertEqual(result, "OK")
+
+    @mock.patch("documents.bulk_edit.delete.si")
+    @mock.patch("documents.bulk_edit.delete.delay")
+    @mock.patch("documents.tasks.consume_file.s")
+    @mock.patch("documents.bulk_edit.chain")
+    def test_append_and_delete_originals(
+        self,
+        mock_chain,
+        mock_consume_file,
+        mock_delete_delay,
+        mock_delete_documents,
+    ):
+        """
+        GIVEN:
+            - Existing documents
+        WHEN:
+            - Append action is called with delete_originals=True
+        THEN:
+            - Delete function should be called with source document IDs
+        """
+        target_doc_id = self.doc1.id
+        source_doc_ids = [self.doc2.id, self.doc3.id]
+        user = User.objects.create(username="test_user")
+
+        result = bulk_edit.append(
+            [target_doc_id] + source_doc_ids,
+            target_document_id=target_doc_id,
+            delete_originals=True,
+            user=user,
+        )
+
+        mock_chain.assert_called()
+        mock_consume_file.assert_called()
+        self.assertEqual(result, "OK")
+
+    @mock.patch("documents.tasks.consume_file.s")
+    def test_append_with_archive_fallback(self, mock_consume_file):
+        """
+        GIVEN:
+            - Existing documents with archive versions
+        WHEN:
+            - Append action is called with archive_fallback=True
+        THEN:
+            - Archive versions should be used for appending
+        """
+        target_doc_id = self.doc1.id
+        source_doc_ids = [self.img_doc.id]  # Image document with archive version
+        user = User.objects.create(username="test_user")
+
+        result = bulk_edit.append(
+            [target_doc_id] + source_doc_ids,
+            target_document_id=target_doc_id,
+            archive_fallback=True,
+            user=user,
+        )
+
+        mock_consume_file.assert_called()
+        self.assertEqual(result, "OK")
+
+    @mock.patch("documents.tasks.consume_file.s")
+    def test_append_with_errors(self, mock_consume_file):
+        """
+        GIVEN:
+            - Existing documents
+        WHEN:
+            - Append action is called with non-existent target document
+        THEN:
+            - Function should return OK without consuming any files
+        """
+        non_existent_target = 9999
+        source_doc_ids = [self.doc2.id, self.doc3.id]
+
+        with self.assertLogs("paperless.bulk_edit", level="ERROR") as cm:
+            result = bulk_edit.append(
+                [non_existent_target] + source_doc_ids,
+                target_document_id=non_existent_target,
+                delete_originals=False,
+            )
+            error_str = cm.output[0]
+            expected_str = f"Target document {non_existent_target} not found"
+            self.assertIn(expected_str, error_str)
+
+        mock_consume_file.assert_not_called()
+        self.assertEqual(result, "OK")
+
     @mock.patch("documents.tasks.bulk_update_documents.si")
     @mock.patch("documents.tasks.update_document_content_maybe_archive_file.s")
     @mock.patch("celery.chord.delay")

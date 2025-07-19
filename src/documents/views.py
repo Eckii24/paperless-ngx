@@ -1314,6 +1314,7 @@ class BulkEditView(PassUserMixin):
         "delete_pages": "checksum",
         "split": None,
         "merge": None,
+        "append": None,
         "reprocess": "checksum",
     }
 
@@ -1332,6 +1333,7 @@ class BulkEditView(PassUserMixin):
         if method in [
             bulk_edit.split,
             bulk_edit.merge,
+            bulk_edit.append,
         ]:
             parameters["user"] = user
 
@@ -1360,7 +1362,7 @@ class BulkEditView(PassUserMixin):
                     bulk_edit.delete_pages,
                 ]
             ) or (
-                method in [bulk_edit.merge, bulk_edit.split]
+                method in [bulk_edit.merge, bulk_edit.split, bulk_edit.append]
                 and parameters["delete_originals"]
             ):
                 has_perms = user_is_owner_of_all_documents
@@ -1368,7 +1370,7 @@ class BulkEditView(PassUserMixin):
             # check global add permissions for methods that create documents
             if (
                 has_perms
-                and method in [bulk_edit.split, bulk_edit.merge]
+                and method in [bulk_edit.split, bulk_edit.merge, bulk_edit.append]
                 and not user.has_perm(
                     "documents.add_document",
                 )
@@ -1381,7 +1383,7 @@ class BulkEditView(PassUserMixin):
                 and (
                     method == bulk_edit.delete
                     or (
-                        method in [bulk_edit.merge, bulk_edit.split]
+                        method in [bulk_edit.merge, bulk_edit.split, bulk_edit.append]
                         and parameters["delete_originals"]
                     )
                 )

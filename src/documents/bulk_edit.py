@@ -560,6 +560,138 @@ def reflect_doclinks(
     Document.objects.filter(id__in=target_doc_ids).update(modified=timezone.now())
 
 
+def append(
+    doc_ids: list[int],
+    *,
+    target_document_id: int,
+    delete_originals: bool = False,
+    archive_fallback: bool = False,
+    user: User | None = None,
+) -> Literal["OK"]:
+    """
+    Append pages from source documents to a target document.
+    Similar to merge but modifies an existing document instead of creating a new one.
+    """
+    logger.info(
+        f"Attempting to append {len(doc_ids) - 1} documents to document {target_document_id}.",
+    )
+    
+    # Get target document
+    try:
+        target_doc = Document.objects.get(id=target_document_id)
+    except Document.DoesNotExist:
+        logger.error(f"Target document {target_document_id} not found")
+        return "OK"
+    
+    # Get source documents (excluding target if it's in the list)
+    source_doc_ids = [doc_id for doc_id in doc_ids if doc_id != target_document_id]
+    qs = Document.objects.filter(id__in=source_doc_ids)
+    affected_docs: list[int] = []
+    
+    import pikepdf
+
+    # Open the target document
+    try:
+        target_path = (
+            target_doc.archive_path
+            if archive_fallback
+            and target_doc.mime_type != "application/pdf"
+            and target_doc.has_archive_version
+            else target_doc.source_path
+        )
+        target_pdf = pikepdf.open(str(target_path))
+        version: str = target_pdf.pdf_version
+    except Exception as e:
+        logger.exception(f"Error opening target document {target_document_id}: {e}")
+        return "OK"
+
+    # Append pages from source documents
+    for doc_id in source_doc_ids:
+        doc = qs.get(id=doc_id)
+        try:
+            doc_path = (
+                doc.archive_path
+                if archive_fallback
+                and doc.mime_type != "application/pdf"
+                and doc.has_archive_version
+                else doc.source_path
+            )
+            with pikepdf.open(str(doc_path)) as pdf:
+                version = max(version, pdf.pdf_version)
+                target_pdf.pages.extend(pdf.pages)
+            affected_docs.append(doc.id)
+        except Exception as e:
+            logger.exception(
+                f"Error appending document {doc.id}, it will not be included in the append: {e}",
+            )
+    
+    if len(affected_docs) == 0:
+        logger.warning("No documents were appended")
+        target_pdf.close()
+        return "OK"
+
+    # Save the modified target document
+    filepath = (
+        Path(
+            tempfile.mkdtemp(dir=settings.SCRATCH_DIR),
+        )
+        / f"{target_document_id}_appended.pdf"
+    )
+    target_pdf.remove_unreferenced_resources()
+    target_pdf.save(filepath, min_version=version)
+    target_pdf.close()
+
+    # Create overrides for re-consumption of the target document
+    overrides: DocumentMetadataOverrides = (
+        DocumentMetadataOverrides.from_document(target_doc)
+    )
+    # Keep the original title but indicate it was appended to
+    overrides.title = target_doc.title + " (appended)"
+
+    if user is not None:
+        overrides.owner_id = user.id
+
+    logger.info(f"Re-consuming target document {target_document_id} with appended pages.")
+
+    # Delete the target document and re-consume with new content
+    if delete_originals and len(affected_docs) > 0:
+        logger.info(
+            "Queueing removal of source documents after appending to target document",
+        )
+        consume_and_delete_task = chain(
+            consume_file.s(
+                ConsumableDocument(
+                    source=DocumentSource.ConsumeFolder,
+                    original_file=filepath,
+                ),
+                overrides,
+            ),
+            chord(
+                header=[delete.si([target_doc.id])],
+                body=delete.si(affected_docs),
+            ),
+        )
+        consume_and_delete_task.delay()
+    else:
+        # Just re-consume the target document and optionally delete source documents
+        delete_target_task = chain(
+            consume_file.s(
+                ConsumableDocument(
+                    source=DocumentSource.ConsumeFolder,
+                    original_file=filepath,
+                ),
+                overrides,
+            ),
+            delete.si([target_doc.id]),
+        )
+        delete_target_task.delay()
+        
+        if delete_originals and len(affected_docs) > 0:
+            delete.delay(affected_docs)
+
+    return "OK"
+
+
 def remove_doclink(
     document: Document,
     field: CustomField,

@@ -1278,6 +1278,86 @@ class TestBulkEditAPI(DirectoriesMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn(b"delete_originals must be a boolean", response.content)
 
+    @mock.patch("documents.serialisers.bulk_edit.append")
+    def test_append(self, m):
+        self.setup_mock(m, "append")
+        response = self.client.post(
+            "/api/documents/bulk_edit/",
+            json.dumps(
+                {
+                    "documents": [self.doc1.id, self.doc2.id, self.doc3.id],
+                    "method": "append",
+                    "parameters": {"target_document_id": self.doc1.id},
+                },
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        m.assert_called_once()
+        args, kwargs = m.call_args
+        self.assertCountEqual(args[0], [self.doc1.id, self.doc2.id, self.doc3.id])
+        self.assertEqual(kwargs["target_document_id"], self.doc1.id)
+        self.assertEqual(kwargs["user"], self.user)
+
+    @mock.patch("documents.serialisers.bulk_edit.append")
+    def test_append_and_delete_insufficient_permissions(self, m):
+        self.doc1.owner = User.objects.get(username="temp_admin")
+        self.doc1.save()
+        user1 = User.objects.create(username="user1")
+        user1.user_permissions.add(*Permission.objects.all())
+        self.client.force_authenticate(user=user1)
+
+        response = self.client.post(
+            "/api/documents/bulk_edit/",
+            json.dumps(
+                {
+                    "documents": [self.doc1.id, self.doc2.id],
+                    "method": "append",
+                    "parameters": {
+                        "target_document_id": self.doc1.id,
+                        "delete_originals": True,
+                    },
+                },
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        m.assert_not_called()
+
+    def test_append_invalid_parameters(self):
+        response = self.client.post(
+            "/api/documents/bulk_edit/",
+            json.dumps(
+                {
+                    "documents": [self.doc1.id, self.doc2.id],
+                    "method": "append",
+                    "parameters": {},  # target_document_id not specified
+                },
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(b"target_document_id not specified", response.content)
+
+        response = self.client.post(
+            "/api/documents/bulk_edit/",
+            json.dumps(
+                {
+                    "documents": [self.doc1.id, self.doc2.id],
+                    "method": "append",
+                    "parameters": {"target_document_id": "not_an_integer"},
+                },
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(b"target_document_id must be an integer", response.content)
+
     @mock.patch("documents.serialisers.bulk_edit.delete_pages")
     def test_delete_pages(self, m):
         self.setup_mock(m, "delete_pages")
